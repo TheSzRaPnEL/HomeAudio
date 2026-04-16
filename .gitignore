@@ -40,3 +40,6 @@ ScaffoldingReadMe.txt
 ## NuGet
 *.nupkg
 *.snupkg
+
+## Publish output
+publish/

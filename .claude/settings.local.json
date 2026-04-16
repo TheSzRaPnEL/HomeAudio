@@ -1,5 +1,20 @@
 {
   "permissions": {
+    "allow": [
+      "Bash(dotnet new *)",
+      "Bash(where dotnet *)",
+      "Read(//c/Program Files/dotnet//**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Bash(powershell.exe -Command \"Get-Command dotnet -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source\")",
+      "Bash(\"/c/Program Files/dotnet/dotnet.exe\" --list-sdks)",
+      "Bash(\"/c/Program Files/dotnet/dotnet.exe\" --list-runtimes)",
+      "Bash(dotnet build *)",
+      "Bash(start \"\" \"HomeAudio\\\\bin\\\\Debug\\\\net8.0-windows10.0.17763.0\\\\HomeAudio.exe\")",
+      "Bash(taskkill /IM HomeAudio.exe /F)",
+      "Bash(powershell.exe -Command \"Stop-Process -Name HomeAudio -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500\")",
+      "Bash(start \"\" \"d:/VS Code Projects/Programs/HomeAudio/HomeAudio/bin/Debug/net8.0-windows10.0.17763.0/HomeAudio.exe\")",
+      "Bash(dotnet publish *)"
+    ],
     "deny": [
       "mcp__claude_ai_Gmail__authenticate",
       "mcp__claude_ai_Gmail__complete_authentication",
@@ -17,20 +32,6 @@
       "Skill(insights)",
       "Skill(team-onboarding)",
       "Skill(update-config)"
-    ],
-    "allow": [
-      "Bash(dotnet new *)",
-      "Bash(where dotnet *)",
-      "Read(//c/Program Files/dotnet//**)",
-      "Read(//c/Program Files \\(x86\\)/**)",
-      "Bash(powershell.exe -Command \"Get-Command dotnet -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source\")",
-      "Bash(\"/c/Program Files/dotnet/dotnet.exe\" --list-sdks)",
-      "Bash(\"/c/Program Files/dotnet/dotnet.exe\" --list-runtimes)",
-      "Bash(dotnet build *)",
-      "Bash(start \"\" \"HomeAudio\\\\bin\\\\Debug\\\\net8.0-windows10.0.17763.0\\\\HomeAudio.exe\")",
-      "Bash(taskkill /IM HomeAudio.exe /F)",
-      "Bash(powershell.exe -Command \"Stop-Process -Name HomeAudio -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500\")",
-      "Bash(start \"\" \"d:/VS Code Projects/Programs/HomeAudio/HomeAudio/bin/Debug/net8.0-windows10.0.17763.0/HomeAudio.exe\")"
     ]
   }
 }
