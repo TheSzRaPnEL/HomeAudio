@@ -1,0 +1,608 @@
+<Window x:Class="HomeAudio.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:HomeAudio.ViewModels"
+        xmlns:conv="clr-namespace:HomeAudio.Converters"
+        mc:Ignorable="d"
+        Title="HomeAudio — Multi-Device Player"
+        Width="960" Height="700"
+        MinWidth="800" MinHeight="580"
+        Background="{StaticResource BrushBackgroundDark}"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <conv:BoolToVisibilityConverter        x:Key="BoolVis"/>
+        <conv:InverseBoolToVisibilityConverter x:Key="InvBoolVis"/>
+        <conv:BoolToActiveBrushConverter       x:Key="ActiveBrush"
+            ActiveBrush="{StaticResource BrushDeviceActive}"
+            InactiveBrush="{StaticResource BrushDeviceInactive}"/>
+        <conv:VolumeToPercentConverter    x:Key="VolPct"/>
+        <conv:LatencyToStringConverter    x:Key="LatencyStr"/>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="56"/>       <!-- Title bar -->
+            <RowDefinition Height="*"/>        <!-- Main content -->
+            <RowDefinition Height="Auto"/>     <!-- Transport + seek -->
+            <RowDefinition Height="28"/>       <!-- Status bar -->
+        </Grid.RowDefinitions>
+
+        <!-- ═══════════════════════════════════ TITLE BAR ═══════════════════════════════════ -->
+        <Border Grid.Row="0" Background="{StaticResource BrushBackgroundMid}">
+            <Grid Margin="16,0">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="🎵" FontSize="22" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBlock Text="HomeAudio" FontSize="20" FontWeight="Bold"
+                               Foreground="{StaticResource BrushAccentCyan}"
+                               VerticalAlignment="Center"/>
+                    <TextBlock Text=" — Multi-Device Player"
+                               FontSize="14"
+                               Foreground="{StaticResource BrushTextSecondary}"
+                               VerticalAlignment="Center" Margin="4,0,0,0"/>
+                </StackPanel>
+
+                <!-- BT / Sound settings shortcuts -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Center" Margin="0,0,8,0">
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Command="{Binding OpenBluetoothCommand}"
+                            ToolTip="Open Windows Bluetooth settings"
+                            Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🔵" FontSize="14" Margin="0,0,6,0"/>
+                            <TextBlock Text="Bluetooth" FontSize="12"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Command="{Binding OpenSoundSettingsCommand}"
+                            ToolTip="Open Windows Sound settings">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🔊" FontSize="14" Margin="0,0,6,0"/>
+                            <TextBlock Text="Sound" FontSize="12"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ═══════════════════════════════════ MAIN CONTENT ════════════════════════════════ -->
+        <Grid Grid.Row="1" Margin="12,12,12,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320"/>    <!-- Device list -->
+                <ColumnDefinition Width="12"/>     <!-- Gutter -->
+                <ColumnDefinition Width="*"/>      <!-- Right panel -->
+            </Grid.ColumnDefinitions>
+
+            <!-- ─────────────── LEFT: Device list ─────────────── -->
+            <Border Grid.Column="0"
+                    Background="{StaticResource BrushBackgroundMid}"
+                    CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Header -->
+                    <Border Grid.Row="0" Background="{StaticResource BrushBackgroundPanel}"
+                            CornerRadius="8,8,0,0" Padding="12,10">
+                        <Grid>
+                            <TextBlock Text="OUTPUT DEVICES"
+                                       Style="{StaticResource SectionHeader}"
+                                       VerticalAlignment="Center"/>
+                            <Button HorizontalAlignment="Right"
+                                    Style="{StaticResource IconButton}"
+                                    Command="{Binding RefreshDevicesCommand}"
+                                    ToolTip="Refresh device list"
+                                    FontSize="16">
+                                <TextBlock Text="↻" FontSize="18"/>
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <!-- Device list -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                  Padding="8">
+                        <ItemsControl ItemsSource="{Binding Devices}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:AudioDeviceViewModel}">
+                                    <Border Margin="0,3"
+                                            CornerRadius="6"
+                                            Padding="10,8"
+                                            Background="{Binding IsActive,
+                                                Converter={StaticResource ActiveBrush}}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                        <Setter Property="Background" Value="#1A2EC4B6"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Active toggle -->
+                                            <CheckBox Grid.Column="0"
+                                                      IsChecked="{Binding IsActive, Mode=TwoWay}"
+                                                      VerticalAlignment="Center"
+                                                      Margin="0,0,8,0"/>
+
+                                            <!-- Device name + BT indicator -->
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Name}"
+                                                           FontSize="13" FontWeight="Medium"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                                    <TextBlock Text="{Binding DeviceIcon}"
+                                                               FontSize="11"
+                                                               Margin="0,0,4,0"/>
+                                                    <TextBlock Text="Bluetooth"
+                                                               FontSize="11"
+                                                               Foreground="{StaticResource BrushAccentCyan}"
+                                                               Visibility="{Binding IsBluetoothDevice,
+                                                                   Converter={StaticResource BoolVis}}"/>
+                                                    <TextBlock Text="Built-in / USB"
+                                                               FontSize="11"
+                                                               Foreground="{StaticResource BrushTextSecondary}"
+                                                               Visibility="{Binding IsBluetoothDevice,
+                                                                   Converter={StaticResource InvBoolVis}}"/>
+                                                </StackPanel>
+                                            </StackPanel>
+
+                                            <!-- Stereo pair role badge -->
+                                            <Border Grid.Column="2"
+                                                    CornerRadius="4"
+                                                    Background="{StaticResource BrushStereoPair}"
+                                                    Padding="6,2"
+                                                    VerticalAlignment="Center"
+                                                    Visibility="{Binding IsStereoPairMember,
+                                                        Converter={StaticResource BoolVis}}">
+                                                <TextBlock Text="{Binding StereoPairRole}"
+                                                           FontSize="11" FontWeight="Bold"
+                                                           Foreground="White"/>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <!-- No devices placeholder -->
+                    <TextBlock Grid.Row="1"
+                               Text="No audio devices found.&#x0A;Connect a Bluetooth device&#x0A;then click ↻ to refresh."
+                               TextAlignment="Center"
+                               Foreground="{StaticResource BrushTextSecondary}"
+                               FontSize="13" Margin="0,40,0,0"
+                               HorizontalAlignment="Center"
+                               Visibility="{Binding Devices.Count,
+                                   Converter={StaticResource InvBoolVis}}"/>
+
+                    <!-- Footer hint -->
+                    <TextBlock Grid.Row="2"
+                               Text="✓ Check devices to include in playback"
+                               FontSize="11"
+                               Foreground="{StaticResource BrushTextSecondary}"
+                               Margin="12,8" HorizontalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <!-- ─────────────── RIGHT PANEL ─────────────── -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>   <!-- File open -->
+                    <RowDefinition Height="12"/>
+                    <RowDefinition Height="*"/>      <!-- Device settings / stereo pair -->
+                </Grid.RowDefinitions>
+
+                <!-- File Open Card -->
+                <Border Grid.Row="0"
+                        Background="{StaticResource BrushBackgroundMid}"
+                        CornerRadius="8" Padding="16,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="AUDIO FILE"
+                                       Style="{StaticResource SectionHeader}"/>
+                            <TextBlock Text="{Binding LoadedFileName}"
+                                       FontSize="14" FontWeight="Medium"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding LoadedFilePath}"/>
+                            <TextBlock Text="{Binding DurationDisplay, StringFormat='Duration: {0}'}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource BrushTextSecondary}"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Style="{StaticResource PrimaryButton}"
+                                Command="{Binding OpenFileCommand}"
+                                VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="📂" FontSize="14" Margin="0,0,6,0"/>
+                                <TextBlock Text="Open File"/>
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </Border>
+
+                <!-- Bottom: Device Settings + Stereo Pair -->
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="260"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Per-device volume / latency settings -->
+                    <Border Grid.Column="0"
+                            Background="{StaticResource BrushBackgroundMid}"
+                            CornerRadius="8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <Border Grid.Row="0"
+                                    Background="{StaticResource BrushBackgroundPanel}"
+                                    CornerRadius="8,8,0,0" Padding="12,10">
+                                <TextBlock Text="DEVICE SETTINGS"
+                                           Style="{StaticResource SectionHeader}"/>
+                            </Border>
+
+                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                          Padding="12">
+                                <ItemsControl ItemsSource="{Binding Devices}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:AudioDeviceViewModel}">
+                                            <!-- Show only active devices -->
+                                            <Border Margin="0,0,0,12"
+                                                    Visibility="{Binding IsActive,
+                                                        Converter={StaticResource BoolVis}}">
+                                                <StackPanel>
+                                                    <!-- Device name -->
+                                                    <TextBlock Text="{Binding Name}"
+                                                               FontSize="13" FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Margin="0,0,0,6"/>
+
+                                                    <!-- Volume row -->
+                                                    <Grid Margin="0,0,0,4">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="60"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="44"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0"
+                                                                   Text="Volume"
+                                                                   FontSize="11"
+                                                                   Foreground="{StaticResource BrushTextSecondary}"
+                                                                   VerticalAlignment="Center"/>
+                                                        <Slider Grid.Column="1"
+                                                                Style="{StaticResource VolumeSlider}"
+                                                                Minimum="0" Maximum="1"
+                                                                Value="{Binding Volume, Mode=TwoWay}"
+                                                                VerticalAlignment="Center"
+                                                                Margin="8,0"/>
+                                                        <TextBlock Grid.Column="2"
+                                                                   Text="{Binding Volume,
+                                                                       Converter={StaticResource VolPct}}"
+                                                                   FontSize="11"
+                                                                   Foreground="{StaticResource BrushAccentCyan}"
+                                                                   VerticalAlignment="Center"
+                                                                   HorizontalAlignment="Right"/>
+                                                    </Grid>
+
+                                                    <!-- Latency offset row -->
+                                                    <Grid Margin="0,0,0,4">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="60"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="50"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0"
+                                                                   Text="Delay"
+                                                                   FontSize="11"
+                                                                   Foreground="{StaticResource BrushTextSecondary}"
+                                                                   VerticalAlignment="Center"/>
+                                                        <Slider Grid.Column="1"
+                                                                Style="{StaticResource LatencySlider}"
+                                                                Minimum="-500" Maximum="500"
+                                                                TickFrequency="10"
+                                                                IsSnapToTickEnabled="True"
+                                                                Value="{Binding LatencyOffsetMs, Mode=TwoWay}"
+                                                                VerticalAlignment="Center"
+                                                                Margin="8,0"
+                                                                ToolTip="Adjust sync offset (ms). Positive = play later."/>
+                                                        <TextBlock Grid.Column="2"
+                                                                   Text="{Binding LatencyOffsetMs,
+                                                                       Converter={StaticResource LatencyStr}}"
+                                                                   FontSize="11"
+                                                                   Foreground="{StaticResource BrushAccentGreen}"
+                                                                   VerticalAlignment="Center"
+                                                                   HorizontalAlignment="Right"/>
+                                                    </Grid>
+
+                                                    <Separator Background="#22FFFFFF" Margin="0,6,0,0"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+
+                            <!-- No active devices hint -->
+                            <TextBlock Grid.Row="1"
+                                       Text="Enable devices in the&#x0A;device list to see settings."
+                                       TextAlignment="Center"
+                                       Foreground="{StaticResource BrushTextSecondary}"
+                                       FontSize="12" Margin="0,40,0,0"
+                                       HorizontalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Stereo Pair panel -->
+                    <Border Grid.Column="2"
+                            Background="{StaticResource BrushBackgroundMid}"
+                            CornerRadius="8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <Border Grid.Row="0"
+                                    Background="{StaticResource BrushBackgroundPanel}"
+                                    CornerRadius="8,8,0,0" Padding="12,10">
+                                <Grid>
+                                    <TextBlock Text="STEREO PAIR"
+                                               Style="{StaticResource SectionHeader}"
+                                               VerticalAlignment="Center"/>
+                                    <CheckBox HorizontalAlignment="Right"
+                                              IsChecked="{Binding StereoPairEnabled, Mode=TwoWay}"
+                                              Content="Enable"
+                                              FontSize="12"
+                                              VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+
+                            <StackPanel Grid.Row="1" Margin="14"
+                                        IsEnabled="{Binding StereoPairEnabled}">
+
+                                <TextBlock Text="Pair two Bluetooth speakers to create&#x0A;a real stereo experience — left channel&#x0A;goes to one device, right to the other."
+                                           FontSize="12"
+                                           Foreground="{StaticResource BrushTextSecondary}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,16"/>
+
+                                <!-- Left device -->
+                                <TextBlock Text="◀  LEFT CHANNEL" FontSize="11"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource BrushAccentCyan}"
+                                           Margin="0,0,0,4"/>
+                                <ComboBox ItemsSource="{Binding AvailableDevicesForPair}"
+                                          SelectedItem="{Binding StereoPairLeft, Mode=TwoWay}"
+                                          DisplayMemberPath="Name"
+                                          Margin="0,0,0,12"
+                                          ToolTip="Device that will play the LEFT channel"/>
+
+                                <!-- Right device -->
+                                <TextBlock Text="RIGHT CHANNEL  ▶" FontSize="11"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource BrushStereoPair}"
+                                           Margin="0,0,0,4"/>
+                                <ComboBox ItemsSource="{Binding AvailableDevicesForPair}"
+                                          SelectedItem="{Binding StereoPairRight, Mode=TwoWay}"
+                                          DisplayMemberPath="Name"
+                                          Margin="0,0,0,16"
+                                          ToolTip="Device that will play the RIGHT channel"/>
+
+                                <!-- Validity indicator -->
+                                <Border CornerRadius="6" Padding="10,8"
+                                        Visibility="{Binding StereoPairEnabled,
+                                            Converter={StaticResource BoolVis}}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="#1A2EC4B6"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding StereoPairValid}"
+                                                             Value="False">
+                                                    <Setter Property="Background" Value="#1AFF6B6B"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="✓ Stereo pair configured"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource BrushAccentGreen}"
+                                                   Visibility="{Binding StereoPairValid,
+                                                       Converter={StaticResource BoolVis}}"/>
+                                        <TextBlock Text="⚠ Select two different devices"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource BrushStereoPair}"
+                                                   Visibility="{Binding StereoPairValid,
+                                                       Converter={StaticResource InvBoolVis}}"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <TextBlock Text="Tip: Enable both devices above,&#x0A;then start playback."
+                                           FontSize="11"
+                                           Foreground="{StaticResource BrushTextSecondary}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,12,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+
+        <!-- ═══════════════════════════════════ TRANSPORT ════════════════════════════════════ -->
+        <Border Grid.Row="2"
+                Background="{StaticResource BrushBackgroundMid}"
+                Margin="12,12,12,0"
+                CornerRadius="8"
+                Padding="16,12">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="10"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Seek bar row -->
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="60"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="60"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding PositionDisplay}"
+                               FontSize="13" FontFamily="Consolas"
+                               Foreground="{StaticResource BrushAccentCyan}"
+                               VerticalAlignment="Center"/>
+
+                    <Slider Grid.Column="1"
+                            x:Name="SeekSlider"
+                            Style="{StaticResource SeekSlider}"
+                            Minimum="0"
+                            Maximum="{Binding DurationSeconds}"
+                            Value="{Binding PositionSeconds, Mode=TwoWay}"
+                            VerticalAlignment="Center"
+                            Margin="8,0"
+                            IsMoveToPointEnabled="True"
+                            PreviewMouseDown="SeekSlider_PreviewMouseDown"
+                            PreviewMouseUp="SeekSlider_PreviewMouseUp"/>
+
+                    <TextBlock Grid.Column="2"
+                               Text="{Binding DurationDisplay}"
+                               FontSize="13" FontFamily="Consolas"
+                               Foreground="{StaticResource BrushTextSecondary}"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Right"/>
+                </Grid>
+
+                <!-- Transport buttons + track name -->
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Track info -->
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding LoadedFileName}"
+                                   FontSize="14" FontWeight="Medium"
+                                   TextTrimming="CharacterEllipsis"
+                                   MaxWidth="300"/>
+                        <TextBlock FontSize="11"
+                                   Foreground="{StaticResource BrushTextSecondary}"
+                                   Margin="0,2,0,0">
+                            <TextBlock.Text>
+                                <MultiBinding StringFormat="{}{0} device(s) active">
+                                    <Binding Path="Devices" />
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
+                    </StackPanel>
+
+                    <!-- Play / Pause / Stop -->
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center">
+
+                        <!-- Stop -->
+                        <Button Style="{StaticResource TransportButton}"
+                                Command="{Binding StopCommand}"
+                                ToolTip="Stop"
+                                Margin="0,0,8,0">
+                            <TextBlock Text="⏹" FontSize="16"/>
+                        </Button>
+
+                        <!-- Play -->
+                        <Button Style="{StaticResource TransportButton}"
+                                Width="54" Height="54"
+                                Command="{Binding PlayCommand}"
+                                ToolTip="Play"
+                                Margin="0,0,8,0">
+                            <TextBlock Text="▶" FontSize="20"/>
+                        </Button>
+
+                        <!-- Pause -->
+                        <Button Style="{StaticResource TransportButton}"
+                                Command="{Binding PauseCommand}"
+                                ToolTip="Pause">
+                            <TextBlock Text="⏸" FontSize="16"/>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Active devices quick summary -->
+                    <ItemsControl Grid.Column="2"
+                                  HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  ItemsSource="{Binding Devices}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal"
+                                           HorizontalAlignment="Right"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:AudioDeviceViewModel}">
+                                <Border Margin="3,2"
+                                        CornerRadius="4"
+                                        Padding="6,3"
+                                        Visibility="{Binding IsActive,
+                                            Converter={StaticResource BoolVis}}">
+                                    <Border.Background>
+                                        <SolidColorBrush Color="#1A2EC4B6"/>
+                                    </Border.Background>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding DeviceIcon}"
+                                                   FontSize="11" Margin="0,0,4,0"/>
+                                        <TextBlock Text="{Binding Name}"
+                                                   FontSize="11"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxWidth="120"
+                                                   Foreground="{StaticResource BrushAccentCyan}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- ═══════════════════════════════════ STATUS BAR ══════════════════════════════════ -->
+        <Border Grid.Row="3"
+                Background="{StaticResource BrushBackgroundPanel}"
+                Padding="12,0">
+            <TextBlock Text="{Binding StatusMessage}"
+                       FontSize="11"
+                       Foreground="{StaticResource BrushTextSecondary}"
+                       VerticalAlignment="Center"/>
+        </Border>
+    </Grid>
+</Window>
