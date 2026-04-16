@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomeAudio.Models;
@@ -14,6 +15,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public MainViewModel()
     {
         _engine.PlaybackStopped += OnEnginePlaybackStopped;
+        _engine.PlaybackError   += OnEnginePlaybackError;
         _engine.PositionChanged += OnEnginePositionChanged;
 
         RefreshDevicesCommand.Execute(null);
@@ -253,6 +255,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // ──────────────────────────────────────────────────────────────
     // Engine callbacks (come on a background thread)
     // ──────────────────────────────────────────────────────────────
+
+    private void OnEnginePlaybackError(string message)
+    {
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+        {
+            PlaybackState = AppPlaybackState.Stopped;
+            OnPropertyChanged(nameof(IsPlaying));
+            OnPropertyChanged(nameof(IsStopped));
+            StatusMessage = $"Error: {message}";
+        });
+    }
 
     private void OnEnginePlaybackStopped()
     {

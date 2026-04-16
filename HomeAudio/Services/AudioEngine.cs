@@ -19,6 +19,7 @@ public class AudioEngine : IDisposable
     public string? LoadedFile { get; private set; }
 
     public event Action? PlaybackStopped;
+    public event Action<string>? PlaybackError;
     public event Action<TimeSpan>? PositionChanged;
 
     // ──────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ public class AudioEngine : IDisposable
 
             var player = new DevicePlayer(device, allSamples, sourceFormat, channel, silenceMs);
             player.PlaybackStopped += OnAnyPlayerStopped;
+            player.PlaybackError   += msg => PlaybackError?.Invoke(msg);
             _players.Add(player);
         }
     }
@@ -79,7 +81,12 @@ public class AudioEngine : IDisposable
     {
         if (_players.Count == 0) return;
 
-        if (State == AppPlaybackState.Paused)
+        bool resuming = State == AppPlaybackState.Paused;
+
+        // Set state BEFORE starting so PlaybackStopped callbacks see the correct state
+        State = AppPlaybackState.Playing;
+
+        if (resuming)
         {
             foreach (var p in _players) p.Resume();
         }
@@ -90,7 +97,6 @@ public class AudioEngine : IDisposable
             foreach (var p in _players) p.Start();
         }
 
-        State = AppPlaybackState.Playing;
         StartPositionTimer();
     }
 
@@ -195,6 +201,7 @@ internal class DevicePlayer : IDisposable
     public TimeSpan Position => _memProvider?.Position ?? TimeSpan.Zero;
 
     public event Action? PlaybackStopped;
+    public event Action<string>? PlaybackError;
 
     public DevicePlayer(
         AudioDevice device,
@@ -231,10 +238,17 @@ internal class DevicePlayer : IDisposable
         _waveOut = new WaveOutEvent
         {
             DeviceNumber = _device.WaveOutDeviceNumber,
-            DesiredLatency = 100
+            DesiredLatency = 300   // 300 ms is safer for Bluetooth
         };
-        _waveOut.PlaybackStopped += (_, _) => PlaybackStopped?.Invoke();
-        _waveOut.Init(_pipeline!.ToWaveProvider());
+        _waveOut.PlaybackStopped += (_, args) =>
+        {
+            if (args.Exception != null)
+                PlaybackError?.Invoke($"[{_device.Name}] {args.Exception.Message}");
+            else
+                PlaybackStopped?.Invoke();
+        };
+        // Use 16-bit PCM — universally supported by all devices including Bluetooth
+        _waveOut.Init(new SampleToWaveProvider16(_pipeline!));
         _prepared = true;
     }
 
