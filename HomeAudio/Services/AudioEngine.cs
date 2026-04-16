@@ -196,6 +196,35 @@ internal class DevicePlayer : IDisposable
     public event Action? PlaybackStopped;
     public event Action<string>? PlaybackError;
 
+    /// <summary>
+    /// Constructs a DevicePlayer driven by an arbitrary live <see cref="ISampleProvider"/>
+    /// (e.g. microphone passthrough).  No seek or position tracking is available.
+    /// </summary>
+    public DevicePlayer(
+        AudioDevice device,
+        ISampleProvider source,
+        DeviceChannel channel,
+        int silencePaddingMs)
+    {
+        _device = device;
+        // _memProvider intentionally left null — live streams have no seek/reset.
+
+        ISampleProvider pipeline = source;
+
+        if (channel == DeviceChannel.LeftOnly && source.WaveFormat.Channels >= 2)
+            pipeline = new ChannelSelectProvider(pipeline, 0);
+        else if (channel == DeviceChannel.RightOnly && source.WaveFormat.Channels >= 2)
+            pipeline = new ChannelSelectProvider(pipeline, 1);
+
+        var vol = new VolumeSampleProvider(pipeline) { Volume = device.Volume };
+        pipeline = vol;
+
+        if (silencePaddingMs > 0)
+            pipeline = new SilencePaddedProvider(pipeline, silencePaddingMs);
+
+        _pipeline = pipeline;
+    }
+
     public DevicePlayer(
         AudioDevice device,
         float[] samples,

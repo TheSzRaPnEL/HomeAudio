@@ -15,6 +15,7 @@
     <Window.Resources>
         <conv:BoolToVisibilityConverter        x:Key="BoolVis"/>
         <conv:InverseBoolToVisibilityConverter x:Key="InvBoolVis"/>
+        <conv:InverseBoolConverter             x:Key="InvBool"/>
         <conv:BoolToActiveBrushConverter       x:Key="ActiveBrush"
             ActiveBrush="{StaticResource BrushDeviceActive}"
             InactiveBrush="{StaticResource BrushDeviceInactive}"/>
@@ -279,6 +280,8 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>   <!-- File -->
                     <RowDefinition Height="10"/>
+                    <RowDefinition Height="Auto"/>   <!-- Mic input -->
+                    <RowDefinition Height="10"/>
                     <RowDefinition Height="*"/>      <!-- Pair + settings -->
                 </Grid.RowDefinitions>
 
@@ -311,8 +314,76 @@
                     </Grid>
                 </Border>
 
+                <!-- Mic Input -->
+                <Border Grid.Row="2"
+                        Background="{StaticResource BrushBackgroundMid}"
+                        CornerRadius="8" Padding="16,10">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="8"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Header row -->
+                        <Grid Grid.Row="0">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="🎤" FontSize="14" Margin="0,0,6,0"/>
+                                <TextBlock Text="MIC PASSTHROUGH"
+                                           Style="{StaticResource SectionHeader}"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <Button HorizontalAlignment="Right" Style="{StaticResource IconButton}"
+                                    Command="{Binding RefreshInputDevicesCommand}"
+                                    ToolTip="Refresh microphone list">
+                                <TextBlock Text="↻" FontSize="18"/>
+                            </Button>
+                        </Grid>
+
+                        <!-- Mic selector + start/stop -->
+                        <Grid Grid.Row="2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <ComboBox Grid.Column="0"
+                                      ItemsSource="{Binding InputDevices}"
+                                      SelectedItem="{Binding SelectedInputDevice, Mode=TwoWay}"
+                                      DisplayMemberPath="Name"
+                                      VerticalAlignment="Center"
+                                      IsEnabled="{Binding IsMicActive, Converter={StaticResource InvBool}}"/>
+
+                            <!-- Start button (visible when inactive) -->
+                            <Button Grid.Column="2"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding StartMicCommand}"
+                                    Visibility="{Binding IsMicActive, Converter={StaticResource InvBoolVis}}"
+                                    ToolTip="Start mic passthrough to selected output devices">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="🎤" FontSize="13" Margin="0,0,5,0"/>
+                                    <TextBlock Text="Start"/>
+                                </StackPanel>
+                            </Button>
+
+                            <!-- Stop button (visible when active) -->
+                            <Button Grid.Column="2"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding StopMicCommand}"
+                                    Visibility="{Binding IsMicActive, Converter={StaticResource BoolVis}}"
+                                    ToolTip="Stop mic passthrough">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="⏹" FontSize="13" Margin="0,0,5,0"/>
+                                    <TextBlock Text="Stop Mic"/>
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </Grid>
+                </Border>
+
                 <!-- Stereo pairs + Device settings -->
-                <Grid Grid.Row="2">
+                <Grid Grid.Row="4">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="10"/>

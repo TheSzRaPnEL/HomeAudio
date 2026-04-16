@@ -10,8 +10,9 @@ namespace HomeAudio.ViewModels;
 
 public partial class MainViewModel : ObservableObject, IDisposable
 {
-    private readonly AudioEngine         _engine      = new();
-    private readonly SonosPlaybackManager _sonosMgr   = new();
+    private readonly AudioEngine          _engine      = new();
+    private readonly SonosPlaybackManager _sonosMgr    = new();
+    private readonly MicPassthroughEngine _micEngine   = new();
 
     // Last decoded audio — shared between AudioEngine and SonosPlaybackManager
     private AudioDecoder.DecodedAudio? _decoded;
@@ -25,8 +26,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _engine.PlaybackStopped += OnEnginePlaybackStopped;
         _engine.PlaybackError   += OnEnginePlaybackError;
         _engine.PositionChanged += OnEnginePositionChanged;
+        _micEngine.Error        += OnMicError;
 
         RefreshDevicesCommand.Execute(null);
+        RefreshInputDevicesCommand.Execute(null);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -422,6 +425,87 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    // Microphone passthrough
+    // ══════════════════════════════════════════════════════════════════════════
+
+    public ObservableCollection<InputDeviceViewModel> InputDevices { get; } = new();
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartMic))]
+    private InputDeviceViewModel? _selectedInputDevice;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartMic))]
+    private bool _isMicActive;
+
+    public bool CanStartMic => SelectedInputDevice != null && !IsMicActive;
+
+    [RelayCommand]
+    private void RefreshInputDevices()
+    {
+        var current = SelectedInputDevice?.Model.Id;
+        InputDevices.Clear();
+
+        foreach (var d in MicrophoneCapture.GetInputDevices())
+        {
+            var vm = new InputDeviceViewModel(d);
+            InputDevices.Add(vm);
+            if (d.Id == current || (current == null && d.IsDefault))
+                SelectedInputDevice = vm;
+        }
+
+        if (SelectedInputDevice == null && InputDevices.Count > 0)
+            SelectedInputDevice = InputDevices[0];
+    }
+
+    [RelayCommand(CanExecute = nameof(CanStartMic))]
+    private void StartMic()
+    {
+        var waveOutDevices = Devices.Where(d => d.IsActive).Select(d => d.Model).ToList();
+        if (waveOutDevices.Count == 0)
+        {
+            StatusMessage = "Select at least one output device for mic passthrough.";
+            return;
+        }
+
+        StereoPair? pair = null;
+        if (StereoPairValid)
+            pair = new StereoPair
+            {
+                IsEnabled   = true,
+                LeftDevice  = StereoPairLeft!.Model,
+                RightDevice = StereoPairRight!.Model
+            };
+
+        try
+        {
+            _micEngine.Start(SelectedInputDevice!.Model, waveOutDevices, pair);
+            IsMicActive = true;
+            StatusMessage = $"Mic passthrough active → {waveOutDevices.Count} device(s).";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Mic error: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void StopMic()
+    {
+        _micEngine.Stop();
+        IsMicActive   = false;
+        StatusMessage = "Mic passthrough stopped.";
+    }
+
+    private void OnMicError(string message) =>
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+        {
+            _micEngine.Stop();
+            IsMicActive   = false;
+            StatusMessage = $"Mic error: {message}";
+        });
+
+    // ══════════════════════════════════════════════════════════════════════════
     // Bluetooth / Sound shortcuts
     // ══════════════════════════════════════════════════════════════════════════
 
@@ -479,6 +563,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         StopSonosPositionTimer();
         _engine.Dispose();
         _sonosMgr.Dispose();
+        _micEngine.Dispose();
         GC.SuppressFinalize(this);
     }
 }
