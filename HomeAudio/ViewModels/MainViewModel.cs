@@ -16,6 +16,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // Last decoded audio — shared between AudioEngine and SonosPlaybackManager
     private AudioDecoder.DecodedAudio? _decoded;
 
+    // Position timer used when only Sonos devices are active (no WaveOut engine running)
+    private System.Timers.Timer? _sonosPositionTimer;
+    private DateTime             _sonosPlaybackStart;
+
     public MainViewModel()
     {
         _engine.PlaybackStopped += OnEnginePlaybackStopped;
@@ -312,6 +316,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 // Start Sonos (with per-device latency delay)
                 if (sonosDevices.Count > 0)
                     _ = _sonosMgr.PlayAsync(referenceMs: 0);
+
+                // When no WaveOut device is active the AudioEngine never starts its
+                // position timer, so we run our own elapsed-time tracker for Sonos.
+                if (sonosDevices.Count > 0 && waveOutDevices.Count == 0)
+                    StartSonosPositionTimer();
             }
 
             PlaybackState = AppPlaybackState.Playing;
@@ -330,6 +339,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task Pause()
     {
+        StopSonosPositionTimer();
         _engine.Pause();
         await _sonosMgr.PauseAsync();
         PlaybackState = AppPlaybackState.Paused;
@@ -340,6 +350,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task Stop()
     {
+        StopSonosPositionTimer();
         _engine.Stop();
         await _sonosMgr.StopAsync();
         PlaybackState   = AppPlaybackState.Stopped;
@@ -357,6 +368,57 @@ public partial class MainViewModel : ObservableObject, IDisposable
         IsSeeking = false;
         _engine.Seek(TimeSpan.FromSeconds(PositionSeconds));
         // Sonos seek via Stop + re-prepare is complex; skip for now
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sonos-only position timer
+    // (AudioEngine never starts when there are no WaveOut devices)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private void StartSonosPositionTimer()
+    {
+        StopSonosPositionTimer();
+        _sonosPlaybackStart = DateTime.UtcNow;
+        _sonosPositionTimer = new System.Timers.Timer(250);
+        _sonosPositionTimer.Elapsed += OnSonosPositionTick;
+        _sonosPositionTimer.AutoReset = true;
+        _sonosPositionTimer.Start();
+    }
+
+    private void StopSonosPositionTimer()
+    {
+        _sonosPositionTimer?.Stop();
+        _sonosPositionTimer?.Dispose();
+        _sonosPositionTimer = null;
+    }
+
+    private void OnSonosPositionTick(object? sender, System.Timers.ElapsedEventArgs e)
+    {
+        var elapsed = DateTime.UtcNow - _sonosPlaybackStart;
+        double pos = elapsed.TotalSeconds;
+
+        if (pos >= DurationSeconds)
+        {
+            StopSonosPositionTimer();
+            System.Windows.Application.Current?.Dispatcher.Invoke(async () =>
+            {
+                await _sonosMgr.StopAsync();
+                PlaybackState   = AppPlaybackState.Stopped;
+                PositionSeconds = 0;
+                PositionDisplay = "0:00";
+                OnPropertyChanged(nameof(IsPlaying));
+                OnPropertyChanged(nameof(IsStopped));
+                StatusMessage = "Playback finished.";
+            });
+            return;
+        }
+
+        if (IsSeeking) return;
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+        {
+            PositionSeconds = pos;
+            PositionDisplay = FormatTime(elapsed);
+        });
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -414,6 +476,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        StopSonosPositionTimer();
         _engine.Dispose();
         _sonosMgr.Dispose();
         GC.SuppressFinalize(this);

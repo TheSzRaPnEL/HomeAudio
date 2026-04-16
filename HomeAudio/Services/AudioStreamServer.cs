@@ -118,15 +118,11 @@ public sealed class AudioStreamServer : IDisposable
 
                 var stream = client.GetStream();
 
-                // Read the HTTP request — we only need the first line
-                string requestLine = await ReadRequestLineAsync(stream);
-
-                // Parse:  GET /audio/stereo.wav?s=abc HTTP/1.1
-                var parts = requestLine.Split(' ');
-                if (parts.Length < 2) return;
-
-                string method = parts[0].ToUpperInvariant();
-                string path   = parts[1].Split('?')[0].ToLowerInvariant();
+                // Read ALL headers up to \r\n\r\n so the receive buffer is empty
+                // before we close the socket.  If we close with unread data in the
+                // receive buffer, Windows TCP sends RST instead of FIN — this aborts
+                // the transfer before Sonos finishes reading the WAV body.
+                var (method, path, rangeStart, rangeEnd) = await ReadHttpRequestAsync(stream);
 
                 byte[]? data = null;
                 if      (path.EndsWith("stereo.wav")) data = _stereoWav;
@@ -135,55 +131,131 @@ public sealed class AudioStreamServer : IDisposable
 
                 if (data == null)
                 {
-                    await WriteResponseAsync(stream, 404, "Not Found", null, method);
+                    await WriteResponseAsync(stream, 404, "Not Found", null, 0, 0, method);
                     return;
                 }
 
-                await WriteResponseAsync(stream, 200, "OK", data, method);
+                long fileSize = data.LongLength;
+                long start    = rangeStart ?? 0;
+                long end      = rangeEnd   ?? (fileSize - 1);
+                start = Math.Max(0, Math.Min(start, fileSize - 1));
+                end   = Math.Max(start, Math.Min(end, fileSize - 1));
+
+                bool isRange = rangeStart.HasValue;
+                await WriteResponseAsync(
+                    stream,
+                    isRange ? 206 : 200,
+                    isRange ? "Partial Content" : "OK",
+                    data, start, end, method);
             }
             catch { /* client disconnected or timed out */ }
         }
     }
 
-    private static async Task<string> ReadRequestLineAsync(NetworkStream stream)
+    /// <summary>
+    /// Reads all HTTP request headers up to the blank line that terminates them.
+    /// Also extracts the method, path, and optional Range header.
+    /// Draining all headers ensures no unread data remains in the socket receive
+    /// buffer, allowing a graceful TCP FIN rather than a RST on close.
+    /// </summary>
+    private static async Task<(string method, string path, long? rangeStart, long? rangeEnd)>
+        ReadHttpRequestAsync(NetworkStream stream)
     {
-        var sb  = new StringBuilder(256);
-        var buf = new byte[1];
+        var  sb        = new StringBuilder(256);
+        var  buf       = new byte[1];
+        char prev      = '\0';
+        bool firstLine = true;
+        string method  = "GET";
+        string path    = "/";
+        long?  rangeStart = null;
+        long?  rangeEnd   = null;
 
-        // Read byte-by-byte until \r\n (the end of the first HTTP request line)
-        char prev = '\0';
         while (true)
         {
             int n = await stream.ReadAsync(buf, 0, 1);
             if (n == 0) break;
 
             char c = (char)buf[0];
-            if (prev == '\r' && c == '\n') break;
-            if (c != '\r') sb.Append(c);
+
+            if (prev == '\r' && c == '\n')
+            {
+                string line = sb.ToString();
+                sb.Clear();
+
+                if (firstLine)
+                {
+                    // "GET /audio/stereo.wav?s=abc HTTP/1.1"
+                    var parts = line.Split(' ');
+                    if (parts.Length >= 2)
+                    {
+                        method = parts[0].ToUpperInvariant();
+                        path   = parts[1].Split('?')[0].ToLowerInvariant();
+                    }
+                    firstLine = false;
+                }
+                else if (line.Length == 0)
+                {
+                    break; // blank line = end of headers
+                }
+                else
+                {
+                    // Parse Range header only; skip everything else
+                    int colon = line.IndexOf(':');
+                    if (colon > 0)
+                    {
+                        string hName  = line[..colon].Trim();
+                        string hValue = line[(colon + 1)..].Trim();
+                        if (hName.Equals("Range", StringComparison.OrdinalIgnoreCase) &&
+                            hValue.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // e.g. "bytes=0-"  "bytes=0-999"  "bytes=-500"
+                            string range = hValue[6..];
+                            int    dash  = range.IndexOf('-');
+                            if (dash >= 0)
+                            {
+                                if (dash > 0 && long.TryParse(range[..dash], out long rs))
+                                    rangeStart = rs;
+                                if (dash < range.Length - 1 && long.TryParse(range[(dash + 1)..], out long re))
+                                    rangeEnd = re;
+                            }
+                        }
+                    }
+                }
+            }
+            else if (c != '\r')
+            {
+                sb.Append(c);
+            }
+
             prev = c;
         }
-        return sb.ToString();
+
+        return (method, path, rangeStart, rangeEnd);
     }
 
     private static async Task WriteResponseAsync(
         NetworkStream stream, int statusCode, string statusText,
-        byte[]? body, string method)
+        byte[]? data, long rangeStart, long rangeEnd, string method)
     {
-        int length = body?.Length ?? 0;
-        string header =
-            $"HTTP/1.1 {statusCode} {statusText}\r\n" +
-            $"Content-Type: audio/wav\r\n" +
-            $"Content-Length: {length}\r\n" +
-            "Accept-Ranges: bytes\r\n" +
-            "Cache-Control: no-cache\r\n" +
-            "Connection: close\r\n" +
-            "\r\n";
+        long bodyLength = data != null ? (rangeEnd - rangeStart + 1) : 0;
+        long fileSize   = data?.LongLength ?? 0;
 
-        await stream.WriteAsync(Encoding.ASCII.GetBytes(header));
+        var header = new StringBuilder();
+        header.Append($"HTTP/1.1 {statusCode} {statusText}\r\n");
+        header.Append( "Content-Type: audio/wav\r\n");
+        header.Append($"Content-Length: {bodyLength}\r\n");
+        header.Append( "Accept-Ranges: bytes\r\n");
+        if (statusCode == 206)
+            header.Append($"Content-Range: bytes {rangeStart}-{rangeEnd}/{fileSize}\r\n");
+        header.Append("Cache-Control: no-cache\r\n");
+        header.Append("Connection: close\r\n");
+        header.Append("\r\n");
+
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(header.ToString()));
 
         // HEAD requests get headers only
-        if (method != "HEAD" && body != null)
-            await stream.WriteAsync(body);
+        if (method != "HEAD" && data != null)
+            await stream.WriteAsync(data, (int)rangeStart, (int)bodyLength);
 
         await stream.FlushAsync();
     }
