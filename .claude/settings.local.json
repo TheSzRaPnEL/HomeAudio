@@ -1,5 +1,23 @@
 {
   "permissions": {
+    "deny": [
+      "mcp__claude_ai_Gmail__authenticate",
+      "mcp__claude_ai_Gmail__complete_authentication",
+      "mcp__claude_ai_Google_Calendar__authenticate",
+      "mcp__claude_ai_Google_Calendar__complete_authentication",
+      "Skill(keybindings-help)",
+      "Skill(simplify)",
+      "Skill(loop)",
+      "Skill(schedule)",
+      "Skill(claude-api)",
+      "Skill(init)",
+      "Skill(statusline)",
+      "Skill(review)",
+      "Skill(security-review)",
+      "Skill(insights)",
+      "Skill(team-onboarding)",
+      "Skill(update-config)"
+    ],
     "allow": [
       "Bash(dotnet new *)",
       "Bash(where dotnet *)",
