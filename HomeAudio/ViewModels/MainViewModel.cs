@@ -462,7 +462,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private void StartMic()
     {
         var waveOutDevices = Devices.Where(d => d.IsActive).Select(d => d.Model).ToList();
-        if (waveOutDevices.Count == 0)
+        var sonosDevices   = SonosDevices.Where(d => d.IsActive).Select(d => d.Model).ToList();
+
+        if (waveOutDevices.Count == 0 && sonosDevices.Count == 0)
         {
             StatusMessage = "Select at least one output device for mic passthrough.";
             return;
@@ -477,11 +479,20 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 RightDevice = StereoPairRight!.Model
             };
 
+        SonosStereoPair? sonosPair = null;
+        if (SonosStereoPairValid)
+            sonosPair = new SonosStereoPair
+            {
+                IsEnabled   = true,
+                LeftDevice  = SonosStereoPairLeft!.Model,
+                RightDevice = SonosStereoPairRight!.Model
+            };
+
         try
         {
-            _micEngine.Start(SelectedInputDevice!.Model, waveOutDevices, pair);
+            _micEngine.Start(SelectedInputDevice!.Model, waveOutDevices, pair, sonosDevices, sonosPair);
             IsMicActive = true;
-            StatusMessage = $"Mic passthrough active → {waveOutDevices.Count} device(s).";
+            StatusMessage = $"Mic passthrough active → {waveOutDevices.Count} WaveOut + {sonosDevices.Count} Sonos device(s).";
         }
         catch (Exception ex)
         {

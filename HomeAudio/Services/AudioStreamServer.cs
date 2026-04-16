@@ -25,6 +25,11 @@ public sealed class AudioStreamServer : IDisposable
     private byte[]? _leftWav;
     private byte[]? _rightWav;
 
+    // Live-streaming state for mic passthrough to Sonos
+    private MicrophoneCapture?      _liveMic;
+    private WaveFormat?             _liveFormat;
+    private CancellationTokenSource _liveStreamCts = new();
+
     public string   LocalIp  { get; private set; } = "127.0.0.1";
     public int      Port     { get; private set; }
     public TimeSpan Duration { get; private set; }
@@ -51,6 +56,39 @@ public sealed class AudioStreamServer : IDisposable
         DeviceChannel.RightOnly => _rightWav?.LongLength ?? 0,
         _                       => _stereoWav?.LongLength ?? 0
     };
+
+    // ── Live streaming (mic passthrough) ─────────────────────────────────────
+
+    /// <summary>
+    /// Puts the server into live-streaming mode. Connections to /audio/live-*.wav
+    /// will stream real-time PCM from <paramref name="capture"/> until
+    /// <see cref="StopLiveStream"/> is called.
+    /// </summary>
+    public void StartLiveStream(MicrophoneCapture capture, WaveFormat format)
+    {
+        _liveStreamCts.Cancel();
+        _liveStreamCts = new CancellationTokenSource();
+        _liveMic    = capture;
+        _liveFormat = format;
+    }
+
+    public void StopLiveStream()
+    {
+        _liveStreamCts.Cancel();
+        _liveMic    = null;
+        _liveFormat = null;
+    }
+
+    public string GetLiveStreamUrl(DeviceChannel channel)
+    {
+        string file = channel switch
+        {
+            DeviceChannel.LeftOnly  => "live-left",
+            DeviceChannel.RightOnly => "live-right",
+            _                       => "live-stereo"
+        };
+        return $"http://{LocalIp}:{Port}/audio/{file}.wav?s={_session}";
+    }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -123,6 +161,17 @@ public sealed class AudioStreamServer : IDisposable
                 // receive buffer, Windows TCP sends RST instead of FIN — this aborts
                 // the transfer before Sonos finishes reading the WAV body.
                 var (method, path, rangeStart, rangeEnd) = await ReadHttpRequestAsync(stream);
+
+                // Live stream endpoints (mic passthrough to Sonos)
+                if (path.StartsWith("/audio/live-"))
+                {
+                    DeviceChannel liveCh = path.StartsWith("/audio/live-left")  ? DeviceChannel.LeftOnly
+                                         : path.StartsWith("/audio/live-right") ? DeviceChannel.RightOnly
+                                         : DeviceChannel.Stereo;
+                    client.SendTimeout = 0;   // no timeout — stream stays open until mic stops
+                    await ServeLiveClientAsync(stream, liveCh, method);
+                    return;
+                }
 
                 byte[]? data = null;
                 if      (path.EndsWith("stereo.wav")) data = _stereoWav;
@@ -260,6 +309,115 @@ public sealed class AudioStreamServer : IDisposable
         await stream.FlushAsync();
     }
 
+    // ── Live-stream handler ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Serves a never-ending WAV stream to a Sonos client. The WAV header declares
+    /// a large file size; raw PCM bytes are pumped from the mic ring buffer at
+    /// real-time pace until the live stream is stopped or the client disconnects.
+    /// </summary>
+    private async Task ServeLiveClientAsync(NetworkStream netStream, DeviceChannel channel, string method)
+    {
+        if (_liveMic == null || _liveFormat == null)
+        {
+            await WriteResponseAsync(netStream, 404, "Not Found", null, 0, 0, method);
+            return;
+        }
+
+        var ct         = _liveStreamCts.Token;
+        int sampleRate  = _liveFormat.SampleRate;
+        int srcChannels = _liveFormat.Channels;
+        int outChannels = channel == DeviceChannel.Stereo ? srcChannels : 1;
+        int chIdx       = channel == DeviceChannel.RightOnly ? 1 : 0;
+        int byteRate    = sampleRate * outChannels * 2;
+
+        // Declare a large WAV so Sonos accepts the stream immediately.
+        const int MaxWavBytes = 0x7FFFFFFF;  // ~2 GB
+
+        // Build the 44-byte WAV header
+        var wavHeader = new byte[44];
+        using (var ms = new System.IO.MemoryStream(wavHeader))
+        using (var bw = new System.IO.BinaryWriter(ms))
+        {
+            bw.Write(Encoding.ASCII.GetBytes("RIFF"));
+            bw.Write(MaxWavBytes - 8);
+            bw.Write(Encoding.ASCII.GetBytes("WAVE"));
+            bw.Write(Encoding.ASCII.GetBytes("fmt "));
+            bw.Write(16);
+            bw.Write((short)1);                    // PCM
+            bw.Write((short)outChannels);
+            bw.Write(sampleRate);
+            bw.Write(byteRate);
+            bw.Write((short)(outChannels * 2));    // block align
+            bw.Write((short)16);                   // bits per sample
+            bw.Write(Encoding.ASCII.GetBytes("data"));
+            bw.Write(MaxWavBytes - 44);
+        }
+
+        var httpHeaderBytes = Encoding.ASCII.GetBytes(
+            $"HTTP/1.1 200 OK\r\n" +
+            $"Content-Type: audio/wav\r\n" +
+            $"Content-Length: {MaxWavBytes}\r\n" +
+            $"Cache-Control: no-cache\r\n" +
+            $"Connection: close\r\n" +
+            $"\r\n");
+
+        try
+        {
+            await netStream.WriteAsync(httpHeaderBytes, ct);
+            if (method == "HEAD") return;
+            await netStream.WriteAsync(wavHeader, ct);
+
+            // Pump live audio at real-time rate to avoid flooding Sonos's buffer.
+            var reader         = _liveMic.CreateReader();
+            int framesPerChunk = sampleRate / 50;                           // 20 ms
+            var floatBuf       = new float[framesPerChunk * srcChannels];
+            var pcmBuf         = new byte [framesPerChunk * outChannels * 2];
+
+            var  sw            = System.Diagnostics.Stopwatch.StartNew();
+            long totalPcmBytes = 0;
+
+            while (!ct.IsCancellationRequested)
+            {
+                // Rate-limit to real time so Sonos's buffer doesn't overfill.
+                long expectedBytes = (long)(sw.Elapsed.TotalSeconds * byteRate);
+                if (totalPcmBytes >= expectedBytes)
+                {
+                    await Task.Delay(framesPerChunk / (sampleRate / 1000) / 2, ct);
+                    continue;
+                }
+
+                reader.Read(floatBuf, 0, floatBuf.Length);
+
+                int pcmCount = 0;
+                if (channel == DeviceChannel.Stereo || srcChannels == 1)
+                {
+                    for (int i = 0; i < floatBuf.Length; i++)
+                    {
+                        short s = FloatToShort(floatBuf[i]);
+                        pcmBuf[pcmCount++] = (byte)(s        & 0xFF);
+                        pcmBuf[pcmCount++] = (byte)((s >> 8) & 0xFF);
+                    }
+                }
+                else
+                {
+                    // Extract one channel from interleaved stereo
+                    for (int i = chIdx; i < floatBuf.Length; i += srcChannels)
+                    {
+                        short s = FloatToShort(floatBuf[i]);
+                        pcmBuf[pcmCount++] = (byte)(s        & 0xFF);
+                        pcmBuf[pcmCount++] = (byte)((s >> 8) & 0xFF);
+                    }
+                }
+
+                await netStream.WriteAsync(pcmBuf, 0, pcmCount, ct);
+                totalPcmBytes += pcmCount;
+            }
+        }
+        catch (OperationCanceledException) { /* mic stopped — expected */ }
+        catch { /* client disconnected */ }
+    }
+
     // ── WAV builder ───────────────────────────────────────────────────────────
 
     private static byte[] BuildWav(float[] floatSamples, WaveFormat srcFmt, DeviceChannel channel)
@@ -346,6 +504,7 @@ public sealed class AudioStreamServer : IDisposable
 
     public void Dispose()
     {
+        StopLiveStream();
         Stop();
         GC.SuppressFinalize(this);
     }
