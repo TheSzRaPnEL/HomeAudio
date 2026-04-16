@@ -10,7 +10,11 @@ namespace HomeAudio.ViewModels;
 
 public partial class MainViewModel : ObservableObject, IDisposable
 {
-    private readonly AudioEngine _engine = new();
+    private readonly AudioEngine         _engine      = new();
+    private readonly SonosPlaybackManager _sonosMgr   = new();
+
+    // Last decoded audio — shared between AudioEngine and SonosPlaybackManager
+    private AudioDecoder.DecodedAudio? _decoded;
 
     public MainViewModel()
     {
@@ -21,9 +25,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
         RefreshDevicesCommand.Execute(null);
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // Device list
-    // ──────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // WaveOut devices
+    // ══════════════════════════════════════════════════════════════════════════
 
     public ObservableCollection<AudioDeviceViewModel> Devices { get; } = new();
 
@@ -31,28 +35,82 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private void RefreshDevices()
     {
         Devices.Clear();
-        var devices = AudioDeviceEnumerator.GetOutputDevices();
-        foreach (var d in devices)
+        foreach (var d in AudioDeviceEnumerator.GetOutputDevices())
             Devices.Add(new AudioDeviceViewModel(d));
 
-        // Re-populate stereo pair combos
-        AvailableDevicesForPair.Clear();
-        foreach (var d in Devices)
-            AvailableDevicesForPair.Add(d);
-
+        RebuildPairCandidates();
         UpdateStereoPairRoles();
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // Stereo pair
-    // ──────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sonos devices
+    // ══════════════════════════════════════════════════════════════════════════
+
+    public ObservableCollection<SonosDeviceViewModel> SonosDevices { get; } = new();
+
+    [ObservableProperty]
+    private bool _isSonosDiscovering;
+
+    [ObservableProperty]
+    private string _sonosStatus = "Not discovered yet. Click Discover to scan.";
+
+    [RelayCommand]
+    private async Task DiscoverSonosDevices()
+    {
+        IsSonosDiscovering = true;
+        SonosStatus = "Scanning network for Sonos speakers…";
+
+        try
+        {
+            var found = await _sonosMgr.DiscoverAsync(timeoutMs: 5000);
+
+            // Keep existing active state for devices already in the list
+            var existing = SonosDevices.ToDictionary(vm => vm.Model.Uuid, vm => vm);
+            SonosDevices.Clear();
+
+            foreach (var d in found)
+            {
+                if (existing.TryGetValue(d.Uuid, out var prev))
+                {
+                    d.IsActive         = prev.IsActive;
+                    d.Volume           = prev.Volume;
+                    d.LatencyOffsetMs  = prev.LatencyOffsetMs;
+                    d.Channel          = prev.Channel;
+                }
+                SonosDevices.Add(new SonosDeviceViewModel(d)
+                {
+                    IsActive        = d.IsActive,
+                    Volume          = d.Volume,
+                    LatencyOffsetMs = d.LatencyOffsetMs
+                });
+            }
+
+            SonosStatus = found.Count > 0
+                ? $"Found {found.Count} Sonos device(s)."
+                : "No Sonos speakers found. Ensure they are on the same network.";
+
+            RebuildPairCandidates();
+            UpdateStereoPairRoles();
+        }
+        catch (Exception ex)
+        {
+            SonosStatus = $"Discovery error: {ex.Message}";
+        }
+        finally
+        {
+            IsSonosDiscovering = false;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Stereo pair — WaveOut
+    // ══════════════════════════════════════════════════════════════════════════
 
     public ObservableCollection<AudioDeviceViewModel> AvailableDevicesForPair { get; } = new();
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StereoPairValid))]
     private AudioDeviceViewModel? _stereoPairLeft;
-
     partial void OnStereoPairLeftChanged(AudioDeviceViewModel? value)
     {
         UpdateStereoPairRoles();
@@ -62,7 +120,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StereoPairValid))]
     private AudioDeviceViewModel? _stereoPairRight;
-
     partial void OnStereoPairRightChanged(AudioDeviceViewModel? value)
     {
         UpdateStereoPairRoles();
@@ -71,63 +128,92 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StereoPairValid))]
+    [NotifyPropertyChangedFor(nameof(SonosStereoPairValid))]
     private bool _stereoPairEnabled;
+    partial void OnStereoPairEnabledChanged(bool value) => UpdateStereoPairRoles();
 
     public bool StereoPairValid =>
-        StereoPairEnabled
-        && StereoPairLeft != null
-        && StereoPairRight != null
-        && StereoPairLeft != StereoPairRight;
+        StereoPairEnabled &&
+        StereoPairLeft  != null &&
+        StereoPairRight != null &&
+        StereoPairLeft  != StereoPairRight;
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Stereo pair — Sonos
+    // ══════════════════════════════════════════════════════════════════════════
+
+    public ObservableCollection<SonosDeviceViewModel> AvailableSonosForPair { get; } = new();
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SonosStereoPairValid))]
+    private SonosDeviceViewModel? _sonosStereoPairLeft;
+    partial void OnSonosStereoPairLeftChanged(SonosDeviceViewModel? value)
+    {
+        UpdateStereoPairRoles();
+        if (value != null) value.IsActive = true;
+    }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SonosStereoPairValid))]
+    private SonosDeviceViewModel? _sonosStereoPairRight;
+    partial void OnSonosStereoPairRightChanged(SonosDeviceViewModel? value)
+    {
+        UpdateStereoPairRoles();
+        if (value != null) value.IsActive = true;
+    }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SonosStereoPairValid))]
+    private bool _sonosStereoPairEnabled;
+    partial void OnSonosStereoPairEnabledChanged(bool value) => UpdateStereoPairRoles();
+
+    public bool SonosStereoPairValid =>
+        SonosStereoPairEnabled      &&
+        SonosStereoPairLeft  != null &&
+        SonosStereoPairRight != null &&
+        SonosStereoPairLeft  != SonosStereoPairRight;
+
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private void RebuildPairCandidates()
+    {
+        AvailableDevicesForPair.Clear();
+        foreach (var d in Devices) AvailableDevicesForPair.Add(d);
+
+        AvailableSonosForPair.Clear();
+        foreach (var d in SonosDevices) AvailableSonosForPair.Add(d);
+    }
 
     private void UpdateStereoPairRoles()
     {
-        foreach (var d in Devices)
+        foreach (var d in Devices)     { d.IsStereoPairMember = false; d.StereoPairRole = ""; }
+        foreach (var d in SonosDevices){ d.IsStereoPairMember = false; d.StereoPairRole = ""; }
+
+        if (StereoPairEnabled)
         {
-            d.IsStereoPairMember = false;
-            d.StereoPairRole = string.Empty;
+            if (StereoPairLeft  != null) { StereoPairLeft.IsStereoPairMember  = true; StereoPairLeft.StereoPairRole  = "L"; }
+            if (StereoPairRight != null) { StereoPairRight.IsStereoPairMember = true; StereoPairRight.StereoPairRole = "R"; }
         }
 
-        if (!StereoPairEnabled) return;
-
-        if (StereoPairLeft != null)
+        if (SonosStereoPairEnabled)
         {
-            StereoPairLeft.IsStereoPairMember = true;
-            StereoPairLeft.StereoPairRole = "L";
-        }
-        if (StereoPairRight != null)
-        {
-            StereoPairRight.IsStereoPairMember = true;
-            StereoPairRight.StereoPairRole = "R";
+            if (SonosStereoPairLeft  != null) { SonosStereoPairLeft.IsStereoPairMember  = true; SonosStereoPairLeft.StereoPairRole  = "L"; }
+            if (SonosStereoPairRight != null) { SonosStereoPairRight.IsStereoPairMember = true; SonosStereoPairRight.StereoPairRole = "R"; }
         }
     }
 
-    // ──────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
     // File & playback
-    // ──────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
 
-    [ObservableProperty]
-    private string _loadedFileName = "No file loaded";
-
-    [ObservableProperty]
-    private string _loadedFilePath = string.Empty;
-
-    [ObservableProperty]
-    private AppPlaybackState _playbackState = AppPlaybackState.Stopped;
-
-    [ObservableProperty]
-    private double _positionSeconds;
-
-    [ObservableProperty]
-    private double _durationSeconds = 1;
-
-    [ObservableProperty]
-    private string _positionDisplay = "0:00";
-
-    [ObservableProperty]
-    private string _durationDisplay = "0:00";
-
-    [ObservableProperty]
-    private bool _isSeeking; // true while the user drags the slider
+    [ObservableProperty] private string _loadedFileName = "No file loaded";
+    [ObservableProperty] private string _loadedFilePath = string.Empty;
+    [ObservableProperty] private AppPlaybackState _playbackState = AppPlaybackState.Stopped;
+    [ObservableProperty] private double _positionSeconds;
+    [ObservableProperty] private double _durationSeconds = 1;
+    [ObservableProperty] private string _positionDisplay = "0:00";
+    [ObservableProperty] private string _durationDisplay = "0:00";
+    [ObservableProperty] private bool   _isSeeking;
 
     public bool IsPlaying => PlaybackState == AppPlaybackState.Playing;
     public bool IsStopped => PlaybackState == AppPlaybackState.Stopped;
@@ -138,14 +224,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var dlg = new OpenFileDialog
         {
             Filter = "Audio files|*.mp3;*.wav;*.flac;*.aac;*.ogg;*.m4a|All files|*.*",
-            Title = "Select audio file"
+            Title  = "Select audio file"
         };
         if (dlg.ShowDialog() != true) return;
 
         LoadedFilePath = dlg.FileName;
         LoadedFileName = Path.GetFileName(dlg.FileName);
+        _decoded       = null;   // invalidate cached decoded data
 
-        // Read duration without full decode
         try
         {
             using var reader = new NAudio.Wave.AudioFileReader(dlg.FileName);
@@ -156,19 +242,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void Play()
+    private async Task Play()
     {
-        var activeDevices = Devices.Where(d => d.IsActive).Select(d => d.Model).ToList();
+        if (string.IsNullOrEmpty(LoadedFilePath)) { StatusMessage = "Open an audio file first."; return; }
 
-        if (activeDevices.Count == 0)
+        var waveOutDevices = Devices.Where(d => d.IsActive).Select(d => d.Model).ToList();
+        var sonosDevices   = SonosDevices.Where(d => d.IsActive).Select(d => d.Model).ToList();
+
+        if (waveOutDevices.Count == 0 && sonosDevices.Count == 0)
         {
             StatusMessage = "Select at least one output device.";
-            return;
-        }
-
-        if (string.IsNullOrEmpty(LoadedFilePath))
-        {
-            StatusMessage = "Open an audio file first.";
             return;
         }
 
@@ -177,28 +260,66 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (PlaybackState == AppPlaybackState.Paused)
             {
                 _engine.Play();
+                await _sonosMgr.PauseAsync();   // resume (Sonos Play after Pause resumes)
+                await _sonosMgr.PlayAsync();
             }
             else
             {
-                StereoPair? pair = null;
-                if (StereoPairValid)
+                // Decode once — shared by WaveOut and Sonos
+                if (_decoded == null)
                 {
-                    pair = new StereoPair
-                    {
-                        IsEnabled = true,
-                        LeftDevice = StereoPairLeft!.Model,
-                        RightDevice = StereoPairRight!.Model
-                    };
+                    StatusMessage = "Decoding audio…";
+                    _decoded = await Task.Run(() => AudioDecoder.Decode(LoadedFilePath));
+                    DurationSeconds = _decoded.Duration.TotalSeconds;
+                    DurationDisplay = FormatTime(_decoded.Duration);
                 }
 
-                _engine.Load(LoadedFilePath, activeDevices, pair);
-                _engine.Play();
+                // Build stereo pair objects
+                StereoPair? waveOutPair = null;
+                if (StereoPairValid)
+                    waveOutPair = new StereoPair
+                    {
+                        IsEnabled   = true,
+                        LeftDevice  = StereoPairLeft!.Model,
+                        RightDevice = StereoPairRight!.Model
+                    };
+
+                SonosStereoPair? sonosPair = null;
+                if (SonosStereoPairValid)
+                    sonosPair = new SonosStereoPair
+                    {
+                        IsEnabled   = true,
+                        LeftDevice  = SonosStereoPairLeft!.Model,
+                        RightDevice = SonosStereoPairRight!.Model
+                    };
+
+                // Prepare Sonos (loads URIs, starts HTTP server) — do before WaveOut
+                // so the stream is available when Sonos tries to buffer.
+                if (sonosDevices.Count > 0)
+                {
+                    StatusMessage = "Preparing Sonos devices…";
+                    await _sonosMgr.PrepareAsync(_decoded.Samples, _decoded.Format, sonosDevices, sonosPair);
+                }
+
+                // Load WaveOut engine
+                if (waveOutDevices.Count > 0)
+                    _engine.Load(_decoded, waveOutDevices, waveOutPair);
+
+                // Start WaveOut (non-blocking)
+                if (waveOutDevices.Count > 0)
+                    _engine.Play();
+
+                // Start Sonos (with per-device latency delay)
+                if (sonosDevices.Count > 0)
+                    _ = _sonosMgr.PlayAsync(referenceMs: 0);
             }
 
             PlaybackState = AppPlaybackState.Playing;
             OnPropertyChanged(nameof(IsPlaying));
             OnPropertyChanged(nameof(IsStopped));
-            StatusMessage = $"Playing on {activeDevices.Count} device(s)";
+
+            int total = waveOutDevices.Count + sonosDevices.Count;
+            StatusMessage = $"Playing on {waveOutDevices.Count} WaveOut + {sonosDevices.Count} Sonos device(s).";
         }
         catch (Exception ex)
         {
@@ -207,19 +328,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void Pause()
+    private async Task Pause()
     {
         _engine.Pause();
+        await _sonosMgr.PauseAsync();
         PlaybackState = AppPlaybackState.Paused;
         OnPropertyChanged(nameof(IsPlaying));
         StatusMessage = "Paused";
     }
 
     [RelayCommand]
-    private void Stop()
+    private async Task Stop()
     {
         _engine.Stop();
-        PlaybackState = AppPlaybackState.Stopped;
+        await _sonosMgr.StopAsync();
+        PlaybackState   = AppPlaybackState.Stopped;
         PositionSeconds = 0;
         PositionDisplay = "0:00";
         OnPropertyChanged(nameof(IsPlaying));
@@ -233,31 +356,28 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         IsSeeking = false;
         _engine.Seek(TimeSpan.FromSeconds(PositionSeconds));
+        // Sonos seek via Stop + re-prepare is complex; skip for now
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // Bluetooth shortcuts
-    // ──────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Bluetooth / Sound shortcuts
+    // ══════════════════════════════════════════════════════════════════════════
 
-    [RelayCommand]
-    private void OpenBluetooth() => BluetoothService.OpenBluetoothSettings();
+    [RelayCommand] private void OpenBluetooth()    => BluetoothService.OpenBluetoothSettings();
+    [RelayCommand] private void OpenSoundSettings()=> BluetoothService.OpenSoundSettings();
 
-    [RelayCommand]
-    private void OpenSoundSettings() => BluetoothService.OpenSoundSettings();
-
-    // ──────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
     // Status bar
-    // ──────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
 
-    [ObservableProperty]
-    private string _statusMessage = "Ready. Connect Bluetooth devices, then refresh the device list.";
+    [ObservableProperty] private string _statusMessage =
+        "Ready. Connect Bluetooth devices and refresh, or click Discover to find Sonos speakers.";
 
-    // ──────────────────────────────────────────────────────────────
-    // Engine callbacks (come on a background thread)
-    // ──────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Engine callbacks (arrive on a background thread)
+    // ══════════════════════════════════════════════════════════════════════════
 
-    private void OnEnginePlaybackError(string message)
-    {
+    private void OnEnginePlaybackError(string message) =>
         System.Windows.Application.Current?.Dispatcher.Invoke(() =>
         {
             PlaybackState = AppPlaybackState.Stopped;
@@ -265,20 +385,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsStopped));
             StatusMessage = $"Error: {message}";
         });
-    }
 
-    private void OnEnginePlaybackStopped()
-    {
+    private void OnEnginePlaybackStopped() =>
         System.Windows.Application.Current?.Dispatcher.Invoke(() =>
         {
-            PlaybackState = AppPlaybackState.Stopped;
+            PlaybackState   = AppPlaybackState.Stopped;
             PositionSeconds = 0;
             PositionDisplay = "0:00";
             OnPropertyChanged(nameof(IsPlaying));
             OnPropertyChanged(nameof(IsStopped));
             StatusMessage = "Playback finished.";
         });
-    }
 
     private void OnEnginePositionChanged(TimeSpan position)
     {
@@ -290,14 +407,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
         });
     }
 
-    private static string FormatTime(TimeSpan t)
-        => t.TotalHours >= 1
+    private static string FormatTime(TimeSpan t) =>
+        t.TotalHours >= 1
             ? $"{(int)t.TotalHours}:{t.Minutes:D2}:{t.Seconds:D2}"
             : $"{t.Minutes}:{t.Seconds:D2}";
 
     public void Dispose()
     {
         _engine.Dispose();
+        _sonosMgr.Dispose();
         GC.SuppressFinalize(this);
     }
 }

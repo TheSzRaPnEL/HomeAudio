@@ -27,29 +27,22 @@ public class AudioEngine : IDisposable
     // ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Loads an audio file and sets up playback for each active device.
+    /// Loads pre-decoded audio and sets up playback for each active device.
+    /// Use <see cref="AudioDecoder.Decode"/> to obtain the decoded data first.
     /// </summary>
-    public void Load(string filePath, IEnumerable<AudioDevice> activeDevices, StereoPair? stereoPair)
+    public void Load(
+        AudioDecoder.DecodedAudio decoded,
+        IEnumerable<AudioDevice>  activeDevices,
+        StereoPair?               stereoPair)
     {
         Stop();
         DisposeDevicePlayers();
 
-        LoadedFile = filePath;
+        Duration   = decoded.Duration;
+        LoadedFile = null;
 
-        // Pre-decode the audio file into memory once, as float samples.
-        float[] allSamples;
-        WaveFormat sourceFormat;
-        using (var reader = new AudioFileReader(filePath))
-        {
-            Duration = reader.TotalTime;
-            sourceFormat = reader.WaveFormat;
-            var sampleList = new List<float>();
-            var buf = new float[reader.WaveFormat.SampleRate * reader.WaveFormat.Channels]; // 1s buffer
-            int read;
-            while ((read = reader.Read(buf, 0, buf.Length)) > 0)
-                sampleList.AddRange(buf.Take(read));
-            allSamples = sampleList.ToArray();
-        }
+        float[]    allSamples    = decoded.Samples;
+        WaveFormat sourceFormat  = decoded.Format;
 
         int normalisePositiveOffset = NormaliseLatencyOffsets(activeDevices);
 

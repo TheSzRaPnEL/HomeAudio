@@ -9,7 +9,10 @@
       "Bash(\"/c/Program Files/dotnet/dotnet.exe\" --list-sdks)",
       "Bash(\"/c/Program Files/dotnet/dotnet.exe\" --list-runtimes)",
       "Bash(dotnet build *)",
-      "Bash(start \"\" \"HomeAudio\\\\bin\\\\Debug\\\\net8.0-windows10.0.17763.0\\\\HomeAudio.exe\")"
+      "Bash(start \"\" \"HomeAudio\\\\bin\\\\Debug\\\\net8.0-windows10.0.17763.0\\\\HomeAudio.exe\")",
+      "Bash(taskkill /IM HomeAudio.exe /F)",
+      "Bash(powershell.exe -Command \"Stop-Process -Name HomeAudio -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500\")",
+      "Bash(start \"\" \"d:/VS Code Projects/Programs/HomeAudio/HomeAudio/bin/Debug/net8.0-windows10.0.17763.0/HomeAudio.exe\")"
     ]
   }
 }
